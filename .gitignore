@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local database (each teammate starts fresh)
+college0.db
+
+# Demo script — not for the repo
+demo_script.md
+
+# IDE
+.vscode/
+.idea/
