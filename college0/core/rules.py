@@ -139,10 +139,22 @@ def advance_phase(target: str) -> dict:
                 models.warn_user(s["id"],
                                  f"Has only {n} course(s) at semester start.")
                 events.append(f"Student warned ({s['full_name']}): only {n} course(s).")
+        # Surface the special-registration window in the event log.
+        affected = models.list_special_reg_students()
+        if affected:
+            names = ", ".join(a["full_name"] for a in affected)
+            events.append(
+                "Special registration window OPEN (one more chance) for: " + names
+            )
 
-    # When entering "grading": no specific automatic rule (instructors will grade).
-    # When advancing AWAY from grading (target=setup of next semester) we run
-    # the end-of-semester sweep. We handle that in advance_semester_after_grading.
+    # When entering "grading": close the special-registration window.
+    if target == "grading" and current != "grading":
+        cleared = models.clear_all_special_reg()
+        if cleared:
+            events.append(
+                f"Special registration window CLOSED ({cleared} student(s) "
+                "no longer eligible for re-registration)."
+            )
 
     models.set_phase(target)
     return {"events": events}
@@ -169,9 +181,11 @@ def _cancel_underenrolled(semester: int) -> dict:
                 inst_state = instructors_affected.setdefault(inst_id,
                                                              {"cancelled": 0, "total": 0})
                 inst_state["cancelled"] += 1
-            # Move enrolled students back to a "dropped" state.
+            # Move enrolled students back to a "dropped" state and grant them
+            # the spec's "one more chance" special-registration window.
             for e in enrolled:
                 models.update_enrollment_status(e["id"], "dropped")
+                models.set_special_reg(e["student_id"], 1)
 
     # Suspend instructors who lost ALL of their courses.
     for inst_id in instructors_affected:
@@ -361,11 +375,18 @@ def end_of_grading_sweep() -> list[str]:
 def try_register(student_id: int, course_id: int) -> dict:
     """Validate spec rules and enroll (or waitlist). Returns result dict."""
     state = models.get_semester_state()
-    if state["phase"] not in ("registration",):
-        return {"ok": False, "msg": "Registration is closed in this phase."}
     user = models.get_user(student_id)
     if not user or user["status"] != "active":
         return {"ok": False, "msg": "Inactive student."}
+    # Standard window: REGISTRATION phase. Spec also gives a "one more
+    # chance" window during RUNNING for students whose course was just
+    # cancelled (flag: special_reg_open).
+    if state["phase"] == "registration":
+        pass
+    elif state["phase"] == "running" and models.get_special_reg(student_id):
+        pass
+    else:
+        return {"ok": False, "msg": "Registration is closed in this phase."}
 
     target = models.get_course(course_id)
     if not target or target["status"] != "active":

@@ -20,12 +20,12 @@ def login(username: str, password: str) -> tuple[Optional[dict], Optional[str]]:
         return None, "This account has been terminated."
     if u["status"] == "fired":
         return None, "This account has been fired and cannot log in."
-    if u["status"] == "suspended":
-        return None, ("This account is suspended"
-                      f" until semester {u['suspended_until_semester'] or '?'}."
-                      f" Fine due: ${u['fine_due']:.0f}.")
-    if u["status"] == "graduated":
-        return None, "This student has already graduated."
+    # Suspended and graduated users are intentionally NOT blocked here:
+    # - Suspended students/instructors still need to log in to pay their
+    #   fine and to redeem honor tokens that clear warnings. Their
+    #   dashboard already shows a hard status banner and the rule engine
+    #   (try_register etc.) refuses any privileged actions while inactive.
+    # - Graduated students keep read-only access to their transcript.
     return u, None
 
 

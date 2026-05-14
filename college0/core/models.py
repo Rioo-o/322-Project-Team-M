@@ -34,12 +34,57 @@ def set_phase(phase: str) -> None:
         c.commit()
 
 
-def advance_semester() -> None:
+def advance_semester() -> list[str]:
+    """Roll forward to the next semester (setup phase).
+
+    Spec: "any students receiving up to 3 warnings will be suspended for
+    1 semester …". The suspension is time-boxed, so when we cross into
+    the new semester we lift the hold on anyone whose
+    ``suspended_until_semester`` has now arrived. Their warning counter
+    is reset to 0 (clean slate after serving the punishment); any
+    outstanding fine is left in place so the registrar / student can
+    still settle it.
+
+    Returns a list of human-readable events for the UI's "Latest rule
+    events" panel.
+    """
+    events: list[str] = []
     with connect() as c:
         c.execute(
             "UPDATE semester_state SET semester=semester+1, phase='setup' WHERE id=1"
         )
+        new_sem = c.execute(
+            "SELECT semester FROM semester_state WHERE id=1"
+        ).fetchone()[0]
+        # Anyone whose suspension was set to end at-or-before this new
+        # semester is reactivated.
+        rows = c.execute(
+            """
+            SELECT id, full_name, role, fine_due FROM users
+             WHERE status='suspended'
+               AND suspended_until_semester IS NOT NULL
+               AND suspended_until_semester <= ?
+            """,
+            (new_sem,),
+        ).fetchall()
+        for r in rows:
+            c.execute(
+                """
+                UPDATE users
+                   SET status='active',
+                       suspended_until_semester=NULL,
+                       warnings=0
+                 WHERE id=?
+                """,
+                (r["id"],),
+            )
+            note = (f"Reinstated {r['role']} {r['full_name']} "
+                    f"(suspension served; warnings cleared)")
+            if r["fine_due"]:
+                note += f" — outstanding fine: ${r['fine_due']:.0f}"
+            events.append(note + ".")
         c.commit()
+    return events
 
 
 # ---------- users ----------
@@ -175,6 +220,51 @@ def consume_honor_to_clear_warning(user_id: int) -> bool:
         c.execute("UPDATE users SET warnings=warnings-1 WHERE id=?", (user_id,))
         c.commit()
     return True
+
+
+# ---------- special re-registration window ----------
+
+def set_special_reg(student_id: int, value: int) -> None:
+    """Open (1) or close (0) the special re-registration window for one student."""
+    with connect() as c:
+        c.execute(
+            "UPDATE students SET special_reg_open=? WHERE user_id=?",
+            (value, student_id),
+        )
+        c.commit()
+
+
+def get_special_reg(student_id: int) -> int:
+    with connect() as c:
+        r = c.execute(
+            "SELECT special_reg_open FROM students WHERE user_id=?",
+            (student_id,),
+        ).fetchone()
+    return int(r["special_reg_open"]) if r else 0
+
+
+def list_special_reg_students() -> list[dict]:
+    """Active students currently eligible for the 'one more chance' window."""
+    with connect() as c:
+        rows = c.execute(
+            """
+            SELECT u.id, u.full_name FROM users u
+            JOIN students s ON s.user_id = u.id
+            WHERE u.role='student' AND u.status='active' AND s.special_reg_open=1
+            ORDER BY u.full_name
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def clear_all_special_reg() -> int:
+    """Close the window for everyone. Returns rows affected."""
+    with connect() as c:
+        cur = c.execute(
+            "UPDATE students SET special_reg_open=0 WHERE special_reg_open=1"
+        )
+        c.commit()
+        return cur.rowcount
 
 
 # ---------- applications ----------

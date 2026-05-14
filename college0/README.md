@@ -71,12 +71,13 @@ Other student accounts: `carol`, `dan`, `grace`, `hank`, `ivy`, `jay` (all `pass
    - Move the semester through its 4 phases (Set-up → Registration → Class Running → Grading → next semester).
    - Create courses and assign instructors.
    - Manage the taboo-word list.
+   - **Reviews tab** - the only place in the system that shows who wrote which review (spec: "no one else except the registrars knows who rated which class"); hidden taboo reviews are shown here too, tagged `[HIDDEN]`.
    - Process student / instructor complaints (warn target, warn filer, dismiss).
    - See warnings, suspensions, fines and instructor class-GPA flags.
    - Review and decide graduation applications.
    - "People" tab: see every user's status, warnings, fines.
-4. **Instructor dashboard** - class roster, wait-list admit, grade entry during Grading phase, file a complaint about a student.
-5. **Student dashboard** - register for 2–4 courses (conflict + capacity + retake-F rules), see records, write reviews (with taboo-word filtering and warnings), submit complaints, apply for graduation, **password change on first login**, **tutorial banner** for new students. Honor tokens can be spent to clear warnings; fines can be paid in-app.
+4. **Instructor dashboard** - class roster (with each student's GPA/courses-done/honors summary inline), a **Student Records** tab with each student's basic info + full transcript, wait-list admit, grade entry during Grading phase, file a complaint about a student.
+5. **Student dashboard** - register for 2–4 courses (conflict + capacity + retake-F rules), see records, write reviews (with taboo-word filtering and warnings), submit complaints, apply for graduation, **password change on first login**, **tutorial banner** for new students. Honor tokens can be spent to clear warnings; fines can be paid in-app. If a student's course is cancelled mid-semester, a **special re-registration window** opens automatically and a yellow banner appears on every page until the registrar advances to GRADING.
 6. **AI Q&A** - role-scoped chat area. Looks up a local "vector-style" Q&A corpus first; if nothing matches well enough, it falls back to a simulated LLM answer with a clear hallucination warning. Visitors see general info only; students see their currently-enrolled courses; instructors see their classes.
 7. **Creative feature: Study Buddy Matcher** - in the student dashboard, ranks classmates by Jaccard similarity over current-semester enrollments and shows the courses you share.
 
@@ -134,9 +135,15 @@ These are intentionally simplified to keep the demo simple and offline:
 - The "vector DB" is a query-coverage score over a small canned Q&A corpus stored in SQLite, not a real embedding store.
 - The "LLM fallback" is a templated response with an explicit hallucination warning; no external API is called, so the demo runs fully offline.
 - Semester phases are advanced manually by the registrar (no clock-based progression).
-- The "special re-registration window" for students of cancelled courses is simplified: those students are simply moved to `dropped` for the cancelled course; the registrar can reopen registration manually if desired.
+- The **special re-registration window** for students of cancelled courses is implemented as a per-student flag (`students.special_reg_open`). It opens automatically when the registrar advances to RUNNING and a course cancels; it closes automatically when the registrar advances to GRADING. While open, `try_register` accepts those students even though the global phase is RUNNING.
 - Fines and "email" notifications are surfaced in-app (banners, lists), not actually charged or sent.
 - Graduation requirements are simplified to: 8+ completed courses (grade ≥ D) including CS501 plus either CS510 or CS520.
+
+> **Existing databases**: if you have an older `college0.db` from before
+> the re-registration feature was added, `db.init_schema()` will migrate
+> it automatically (it adds the missing `students.special_reg_open`
+> column on launch). To start clean, just delete `college0.db` and
+> relaunch.
 
 ## Creative feature: Study Buddy Matcher
 

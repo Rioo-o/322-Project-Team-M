@@ -27,6 +27,9 @@ class RegistrarView(tk.Frame):
                             "(Simulated: phases advance on click; in a real system they would be on a calendar.)"),
             "taboo":       ("Taboo Words",
                             "Words on this list are masked or hidden in student reviews and earn warnings."),
+            "reviews":     ("Reviews (authors visible)",
+                            "Spec: only the registrar can see who wrote which review. "
+                            "Hidden reviews (≥3 taboo words) are shown here too, with a [hidden] tag."),
             "complaints":  ("Complaints",
                             "Each complaint must be acted on: warn the target, warn the filer, or dismiss."),
             "grads":       ("Graduation Applications",
@@ -329,8 +332,9 @@ class RegistrarView(tk.Frame):
 
     def _sweep_and_advance(self):
         events = rules.end_of_grading_sweep()
+        # advance_semester now returns its own events (reinstated suspensions).
+        events += models.advance_semester()
         models.set_setting("last_phase_events", "\n".join(events) or "(no events)")
-        models.advance_semester()
         self.app.toast_msg("Sweep complete · new semester begun.")
         self.app.show("registrar_phase")
 
@@ -378,6 +382,47 @@ class RegistrarView(tk.Frame):
         theme.make_button(row, text="Remove selected", command=remove,
                           bg=theme.BAD, fg="white",
                           padx=12, pady=4).pack(side="left", padx=2)
+
+    # ===== Reviews (authorship visible to registrar only) =====
+
+    def _render_reviews(self):
+        # Group all reviews by course; show author name (only here in the UI).
+        # Spec: "no one else except the registrars knows who rated which class."
+        courses = models.list_courses()
+        # Sort: current-semester active first, then everything else.
+        state = models.get_semester_state()
+        courses.sort(key=lambda c: (c["semester"] != state["semester"], c["code"]))
+
+        any_reviews = False
+        for c in courses:
+            reviews = models.reviews_for_course(c["id"], include_hidden=True)
+            if not reviews:
+                continue
+            any_reviews = True
+            avg = models.avg_rating(c["id"]) or 0
+            panel = self._panel(
+                f"{c['code']} · {c['title']}  (sem {c['semester']}, "
+                f"avg {avg:.2f}/5, {len(reviews)} review(s))"
+            )
+            panel.pack(fill="x", pady=(0, 8))
+            for r in reviews:
+                row = tk.Frame(panel, bg=theme.PANEL,
+                               highlightthickness=1, highlightbackground=theme.BORDER,
+                               padx=10, pady=6)
+                row.pack(fill="x", pady=3)
+                tag = "[HIDDEN]" if r["visible"] == 0 else ""
+                head = (f"{r['full_name']}  ·  {r['stars']}/5  ·  "
+                        f"{r['created_at']}  {tag}")
+                tk.Label(row, text=head, bg=theme.PANEL,
+                         fg=(theme.BAD if r["visible"] == 0 else theme.TEXT),
+                         font=theme.FONT_BOLD).pack(anchor="w")
+                tk.Label(row, text=r["body"], bg=theme.PANEL, fg=theme.MUTED,
+                         font=theme.FONT, wraplength=900,
+                         justify="left").pack(anchor="w", pady=(2, 0))
+
+        if not any_reviews:
+            tk.Label(self.body, text="(no reviews yet)", bg=theme.BG,
+                     fg=theme.MUTED).pack(anchor="w")
 
     # ===== Complaints =====
 

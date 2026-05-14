@@ -29,6 +29,14 @@ class StudentView(tk.Frame):
         if app.user.get("warnings") or app.user.get("fine_due"):
             self._status_banner()
 
+        # Special re-registration banner (spec: one more chance for students
+        # whose course was cancelled). Visible on every section so the
+        # student can't miss it.
+        if (models.get_special_reg(app.user["id"])
+                and models.get_semester_state()["phase"] == "running"
+                and section != "register"):
+            self._special_reg_banner()
+
         header_map = {
             "records":   ("My Records",
                           "Your GPA, honors, warnings, transcript, and current enrollments."),
@@ -68,9 +76,16 @@ class StudentView(tk.Frame):
 
     def _hard_status_banner(self):
         status = self.app.user["status"]
+        until = self.app.user.get("suspended_until_semester")
+        susp_msg = ("Your account is SUSPENDED for this semester. You cannot "
+                    "register, review, or file complaints right now. You can "
+                    "still pay your outstanding fine and redeem any honor "
+                    "tokens below. ")
+        if until:
+            susp_msg += (f"You will be automatically reinstated when the "
+                         f"registrar advances to semester {until}.")
         msg = {
-            "suspended":  "Your account is SUSPENDED. You will not be able to register or review next semester. "
-                          "Please contact the registrar and clear any outstanding fine.",
+            "suspended":  susp_msg,
             "terminated": "Your account has been TERMINATED. Please contact the registrar.",
             "graduated":  "Congratulations — you've graduated! Most features are now read-only.",
         }.get(status, "")
@@ -127,6 +142,19 @@ class StudentView(tk.Frame):
                               command=self._use_honor,
                               bg=theme.GOOD, fg="white",
                               padx=8, pady=2).pack(side="right", padx=4)
+
+    def _special_reg_banner(self):
+        box = tk.Frame(self, bg="#fff8e1", highlightthickness=1,
+                       highlightbackground="#f4d35e", padx=14, pady=10)
+        box.pack(fill="x", pady=(0, 8))
+        tk.Label(box,
+                 text="One of your courses was cancelled — special re-registration is open.",
+                 bg="#fff8e1", fg=theme.WARN,
+                 font=theme.FONT_BOLD).pack(side="left")
+        theme.make_button(box, text="Pick another course",
+                          command=lambda: self.app.show("student_register"),
+                          bg=theme.ACCENT, fg="white",
+                          padx=10, pady=2).pack(side="right")
 
     def _pay_fine(self):
         models.pay_fine(self.app.user["id"])
@@ -208,7 +236,26 @@ class StudentView(tk.Frame):
 
     def _render_register(self):
         state = models.get_semester_state()
-        if state["phase"] != "registration":
+        special = models.get_special_reg(self.app.user["id"])
+        # Allow registration in REGISTRATION or in RUNNING with the
+        # "one more chance" flag set. Block everywhere else.
+        if state["phase"] == "registration":
+            pass
+        elif state["phase"] == "running" and special:
+            box = tk.Frame(self, bg="#fff8e1", highlightthickness=1,
+                           highlightbackground="#f4d35e", padx=14, pady=10)
+            box.pack(fill="x", pady=(0, 10))
+            tk.Label(box,
+                     text="Special re-registration window is OPEN for you",
+                     bg="#fff8e1", fg=theme.WARN, font=theme.FONT_H2).pack(anchor="w")
+            tk.Label(box,
+                     text=("One of your courses was cancelled. The spec gives you "
+                           "one more chance to pick another course this semester. "
+                           "This window closes when the registrar advances to the "
+                           "GRADING phase."),
+                     bg="#fff8e1", fg=theme.TEXT, font=theme.FONT,
+                     wraplength=900, justify="left").pack(anchor="w", pady=(4, 0))
+        else:
             tk.Label(self,
                      text=f"Course registration is only open during the REGISTRATION phase "
                           f"(current: {state['phase']}).",

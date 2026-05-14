@@ -37,7 +37,12 @@ CREATE TABLE IF NOT EXISTS students (
     semester_gpa REAL NOT NULL DEFAULT 0,
     courses_completed INTEGER NOT NULL DEFAULT 0,
     honors INTEGER NOT NULL DEFAULT 0,
-    semesters_completed INTEGER NOT NULL DEFAULT 0
+    semesters_completed INTEGER NOT NULL DEFAULT 0,
+    -- Spec: students of cancelled courses get "one more chance" to choose
+    -- other courses. We flip this flag on those students when their course
+    -- cancels, which lets `try_register` accept them during the RUNNING
+    -- phase. Cleared automatically when the registrar advances to GRADING.
+    special_reg_open INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS instructors (
@@ -153,6 +158,17 @@ def init_schema() -> None:
         conn.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('student_quota', '20')"
         )
+        # Backwards-compat migrations for users with an older college0.db.
+        _ensure_column(conn, "students", "special_reg_open",
+                       "INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str,
+                   definition: str) -> None:
+    """Add `column` to `table` if it isn't there yet (idempotent migration)."""
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")

@@ -17,9 +17,20 @@ class InstructorView(tk.Frame):
         self.app = app
         self.section = section
 
+        # Hard banner for suspended / fired instructors — they can still
+        # log in (to track their reinstatement) but should know they
+        # cannot teach.
+        if app.user.get("status") in ("suspended", "fired"):
+            self._hard_status_banner()
+
         header_map = {
             "classes":   ("My Classes & Roster",
-                          "Only the courses you are assigned to show up here. Admit waitlisted students with one click."),
+                          "Only the courses you are assigned to show up here. "
+                          "Each enrolled student shows their basic info + summary academic "
+                          "record (GPA, courses done, honors). Admit waitlisted students with one click."),
+            "records":   ("Student Records",
+                          "Spec: instructors can see the basic info and academic records of "
+                          "students in their current class(es). Full transcripts below."),
             "grades":    ("Grade Entry",
                           "Available only during the GRADING phase. Pick a grade, click Save. GPAs recompute live."),
             "complaint": ("File a Complaint",
@@ -37,6 +48,28 @@ class InstructorView(tk.Frame):
 
     def _not_found(self):
         tk.Label(self, text=f"Unknown section: {self.section}", bg=theme.BG).pack()
+
+    def _hard_status_banner(self):
+        status = self.app.user["status"]
+        until = self.app.user.get("suspended_until_semester")
+        if status == "suspended":
+            msg = ("You are SUSPENDED for this semester. Spec: 'suspended "
+                   "instructors cannot teach in the next semester.' You can "
+                   "still log in to monitor your record. ")
+            if until:
+                msg += (f"You will be automatically reinstated when the "
+                        f"registrar advances to semester {until}.")
+        else:  # fired
+            msg = ("You have been FIRED. Please contact the registrar — "
+                   "your account is read-only.")
+        box = tk.Frame(self, bg="#fff1f0", highlightthickness=2,
+                       highlightbackground=theme.BAD, padx=14, pady=10)
+        box.pack(fill="x", pady=(0, 10))
+        tk.Label(box, text=f"Account status: {status.upper()}",
+                 bg="#fff1f0", fg=theme.BAD, font=theme.FONT_H2).pack(anchor="w")
+        tk.Label(box, text=msg, bg="#fff1f0", fg=theme.TEXT,
+                 font=theme.FONT, wraplength=900,
+                 justify="left").pack(anchor="w")
 
     def _panel(self, title=""):
         p = tk.Frame(self, bg=theme.PANEL, highlightthickness=1,
@@ -73,11 +106,17 @@ class InstructorView(tk.Frame):
             if not enrolled:
                 tk.Label(panel, text="  (no students yet)",
                          bg=theme.PANEL, fg=theme.MUTED).pack(anchor="w")
+            # Index academic info by student id so we can show it inline.
+            records = {s["id"]: s for s in models.list_students()}
             for e in enrolled:
                 line = tk.Frame(panel, bg=theme.PANEL)
                 line.pack(fill="x", anchor="w")
-                tk.Label(line, text=f"  • {e['full_name']}  "
-                                    f"(grade: {e['grade'] or '—'})",
+                rec = records.get(e["student_user_id"]) or {}
+                summary = (f"GPA {rec.get('gpa', 0):.2f} · "
+                           f"{rec.get('courses_completed', 0)} done · "
+                           f"{rec.get('honors', 0)} honors")
+                tk.Label(line, text=f"  • {e['full_name']}  ({summary})  "
+                                    f"grade: {e['grade'] or '—'}",
                          bg=theme.PANEL, fg=theme.TEXT,
                          font=theme.FONT).pack(side="left")
 
@@ -101,6 +140,76 @@ class InstructorView(tk.Frame):
         models.update_enrollment_status(enrollment_id, "enrolled")
         self.app.toast_msg("Student admitted from waitlist.")
         self.app.show("instr_classes")
+
+    # ----- student records (basic info + full transcript) -----
+
+    def _render_records(self):
+        sem = models.get_semester_state()["semester"]
+        my_courses = [c for c in models.list_courses(semester=sem)
+                      if c["instructor_id"] == self.app.user["id"]]
+        if not my_courses:
+            tk.Label(self, text="You aren't assigned to any class this semester.",
+                     bg=theme.BG, fg=theme.MUTED, font=theme.FONT).pack(anchor="w",
+                                                                          pady=10)
+            return
+
+        # Collect the unique set of students across all the instructor's classes.
+        seen: dict[int, dict] = {}
+        for c in my_courses:
+            for e in models.course_enrollments(c["id"],
+                                                statuses=["enrolled", "completed",
+                                                          "failed"]):
+                seen.setdefault(e["student_user_id"], {"name": e["full_name"]})
+
+        if not seen:
+            tk.Label(self, text="No students enrolled in your classes yet.",
+                     bg=theme.BG, fg=theme.MUTED).pack(anchor="w", pady=10)
+            return
+
+        # Per-student panel: basic info + summary + transcript.
+        students_by_id = {s["id"]: s for s in models.list_students()}
+        for sid, info in seen.items():
+            rec = students_by_id.get(sid, {})
+            user = models.get_user(sid) or {}
+
+            panel = self._panel(info["name"])
+            panel.pack(fill="x", pady=(0, 10))
+
+            basic = (
+                f"Username: {user.get('username', '?')}  ·  "
+                f"Status: {user.get('status', '?')}  ·  "
+                f"Warnings: {user.get('warnings', 0)}"
+            )
+            tk.Label(panel, text=basic, bg=theme.PANEL, fg=theme.MUTED,
+                     font=theme.FONT_SMALL).pack(anchor="w")
+
+            summary = (
+                f"GPA {rec.get('gpa', 0):.2f}  ·  "
+                f"Semester GPA {rec.get('semester_gpa', 0):.2f}  ·  "
+                f"{rec.get('courses_completed', 0)} courses completed  ·  "
+                f"{rec.get('honors', 0)} honors"
+            )
+            tk.Label(panel, text=summary, bg=theme.PANEL, fg=theme.TEXT,
+                     font=theme.FONT_BOLD).pack(anchor="w", pady=(2, 6))
+
+            # Transcript table.
+            history = models.student_history(sid)
+            if not history:
+                tk.Label(panel, text="(no completed history yet)",
+                         bg=theme.PANEL, fg=theme.MUTED).pack(anchor="w")
+                continue
+
+            cols = ("semester", "code", "title", "status", "grade")
+            tree = ttk.Treeview(panel, columns=cols, show="headings",
+                                height=min(6, max(2, len(history))))
+            for c, w in zip(cols, (80, 80, 240, 100, 60)):
+                tree.heading(c, text=c.title())
+                tree.column(c, width=w, anchor="w")
+            tree.pack(fill="x")
+            for h in history:
+                tree.insert("", "end",
+                            values=(h["semester"], h["code"], h["title"],
+                                    h["status"], h["grade"] or "—"))
 
     # ----- grades -----
 
