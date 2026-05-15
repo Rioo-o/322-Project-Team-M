@@ -8,11 +8,13 @@ __pycache__/
 .venv/
 venv/
 
-# Local database (each teammate starts fresh)
+# Local SQLite DB — each teammate seeds their own on first run
 college0.db
 
-# Demo script — not for the repo
+# Dev-only helpers that aren't part of the deliverable
 demo_script.md
+smoke_test.py
+requirements.txt
 
 # IDE
 .vscode/

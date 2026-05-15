@@ -1,7 +1,17 @@
-"""Seed demo data.
+"""Pre-populate the DB with realistic-looking demo data.
 
-Re-running this on an existing DB is a no-op (uses INSERT OR IGNORE
-or checks first).
+We seed: a registrar, four instructors, ten students, a brand-new
+first-login student, a handful of current-semester courses, prior-
+semester history that gives everyone a believable transcript, a few
+reviews, default taboo words, and a pending visitor application.
+
+The amounts and shapes are deliberately tuned so the full feature
+demo (waitlists, retakes, auto-cancellation, instructor suspension,
+honor roll, graduation eligibility, etc.) hits naturally without
+having to set things up by hand.
+
+Every insert is guarded — re-running ``seed_all()`` on an existing
+database is a safe no-op.
 """
 from __future__ import annotations
 
@@ -102,10 +112,15 @@ def seed_all() -> None:
             course_ids[code] = cur.lastrowid
         c.commit()
 
-    # Historical (semester 0) enrollments + grades so reviews/GPAs/honors have data.
-    # Note: alice intentionally has NO CS501 in her history so she can demo the
-    # waitlist for the currently-full CS501. Bob has an F in CS510 for the retake demo.
-    # Eve and Carol have 8-course histories so the graduation flow can be approved.
+    # Prior-semester (semester 0) enrollments + grades — what gives the
+    # rest of the system real data to work with for GPAs, honor roll,
+    # transcripts, and so on. A few deliberate choices baked in:
+    #   - Alice has no CS501 in her history → she'll hit the waitlist
+    #     when CS501 fills up in the current semester.
+    #   - Bob has an F in CS510 → perfect for showing the retake rule.
+    #   - Carol + Eve already have 8 completed courses → one click
+    #     away from a graduation approval.
+    #   - Frank + Hank carry low GPAs → end-of-term auto-termination.
     history = [
         ("alice", [("CS510", "B+"), ("CS520", "A-"), ("CS530", "A-"), ("CS540", "B")]),
         ("bob",   [("CS501", "C"),  ("CS510", "F"),  ("CS530", "C+"), ("CS540", "B-")]),
@@ -216,12 +231,14 @@ def seed_all() -> None:
             )
         c.commit()
 
-    # Pre-enroll a handful of students in the CURRENT semester so the demo can
-    # show:
-    #  - CS501 already full -> Alice gets waitlisted
-    #  - CS510/CS520 have room for Alice to enroll cleanly
-    #  - CS540 under-enrolled, CS550 empty -> both cancelled when phase advances
-    #  - prof_diaz teaches only CS540, so they will be auto-suspended on that sweep
+    # Pre-fill some current-semester enrollments so the demo lands a few
+    # interesting situations without any manual setup:
+    #   - CS501 is already at capacity → Alice will be waitlisted.
+    #   - CS510 / CS520 have empty seats → clean enrollments still work.
+    #   - CS540 has only one student and CS550 is empty → both will be
+    #     auto-cancelled when the registrar advances to RUNNING.
+    #   - prof_diaz is the only instructor for CS540, so the all-classes-
+    #     cancelled rule will suspend them on that same sweep.
     current_sem_enrol = {
         "CS501": ["carol", "dan", "eve", "ivy"],   # full
         "CS510": ["carol", "dan", "grace"],         # 3 -> survives

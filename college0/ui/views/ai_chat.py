@@ -20,10 +20,12 @@ class AIChatView(tk.Frame):
                  font=theme.FONT, wraplength=900, justify="left").pack(anchor="w",
                                                                         pady=(4, 4))
         tk.Label(self,
-                 text=("Note (simplification): the 'vector DB' is a small canned "
-                       "College0 knowledge base, and the LLM fallback is a templated "
-                       "response — no external API call. Real systems would route "
-                       "unmatched questions to a hosted LLM."),
+                 text=("Note: the 'vector DB' is a small canned College0 "
+                       "knowledge base. When a question does not match it, the "
+                       "query is delegated to a general LLM (Anthropic Claude) "
+                       "if ANTHROPIC_API_KEY is set; otherwise a templated "
+                       "offline fallback is used. Either way the answer is "
+                       "marked as ungrounded."),
                  bg=theme.BG, fg=theme.WARN, font=theme.FONT_SMALL,
                  wraplength=900, justify="left").pack(anchor="w", pady=(0, 10))
 
@@ -129,8 +131,16 @@ class AIChatView(tk.Frame):
             header = f"College0 AI (local KB · match {r['score']})"
             self._append(header, r["answer"], tag="ai_kb")
         else:
-            self._append("College0 AI (LLM fallback)", r["answer"], tag="ai_llm")
-            self._append("Warning", "This response was not grounded in College0's data and may be a hallucination.",
+            # Label the source so the user can see at a glance whether
+            # the answer came from the real API or from the offline template.
+            if r["source"] == "llm-anthropic":
+                header = "College0 AI (general LLM · Anthropic)"
+            else:
+                header = "College0 AI (LLM fallback · offline template)"
+            self._append(header, r["answer"], tag="ai_llm")
+            self._append("Warning",
+                          "This response was not grounded in College0's data "
+                          "and may be a hallucination.",
                           tag="warn")
 
     def _append(self, who: str, text: str, tag: str):

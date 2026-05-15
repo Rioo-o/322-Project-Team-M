@@ -1,16 +1,34 @@
-"""Simplified AI question area.
+"""AI Q&A backend.
 
-- A small "vector DB" of canned Q&A scoped by user role.
-- "Vector" search = bag-of-words Jaccard overlap (no external libs).
-- If no local entry is good enough, a templated "LLM fallback" answer
-  is returned with an explicit hallucination warning.
+Two layers:
+  1. A small role-scoped Q&A corpus stored in SQLite (``qa_corpus``).
+     We score the user's question against each entry with a quick
+     bag-of-words coverage metric so we don't need a real embedding lib.
+  2. If the best local hit is below ``LOCAL_KB_THRESHOLD`` we treat that
+     as "we don't know this" and forward the question to a general LLM
+     (Anthropic Claude). Whatever it returns is tagged as ungrounded
+     because it's not based on College0's own data.
+
+If the Anthropic SDK isn't installed, ``ANTHROPIC_API_KEY`` isn't set,
+or the call fails for any reason, we fall back to a templated answer so
+the app stays usable fully offline.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Iterable, Optional
 
 from . import models
+
+# If the best local match scores below this, we give up on the KB and
+# forward the question to the general LLM. Kept at module level so we
+# can tune it without digging through the function.
+LOCAL_KB_THRESHOLD = 0.35
+
+# Which Anthropic model to hit for the fallback. A small/fast one is
+# plenty for these generic "we don't actually know this" answers.
+_ANTHROPIC_MODEL = os.environ.get("COLLEGE0_LLM_MODEL", "claude-haiku-4-5")
 
 STOP = {
     "the", "a", "an", "is", "are", "to", "of", "in", "on", "for",
@@ -63,18 +81,18 @@ def ask(question: str, user: Optional[dict],
         kb_all = q_kb | a_kb
         if not q_tokens or not kb_all:
             continue
-        # Score = how many of the user's query terms appear in the KB entry
-        # (gives weight to short, specific queries). Add a small Jaccard
-        # tiebreaker so that overlapping-but-vague matches don't beat focused ones.
+        # Main signal: what fraction of the user's words appear anywhere
+        # in this KB entry. Short, focused queries get rewarded.
         coverage = len(q_tokens & kb_all) / len(q_tokens)
-        # Bonus if the user's words specifically appear in the corpus *question*.
+        # Small tiebreaker: prefer entries where the user's words show up
+        # in the corpus *question* itself, not just the answer body.
         q_match_bonus = len(q_tokens & q_kb) / max(len(q_kb), 1)
         score = coverage * 0.7 + q_match_bonus * 0.3
         if score > best_score:
             best_score = score
             best = r
 
-    if best and best_score >= 0.35:
+    if best and best_score >= LOCAL_KB_THRESHOLD:
         return {
             "answer": best["answer"],
             "source": "local-kb",
@@ -82,19 +100,105 @@ def ask(question: str, user: Optional[dict],
             "matched_question": best["question"],
         }
 
-    # Fallback: simulated LLM with hallucination warning.
+    # KB came up short — hand off to the general LLM. We pass the
+    # best near-miss along as a soft hint so the model can use it as
+    # context without being told to trust it.
+    related = best["answer"] if best else None
+    llm_answer, llm_source = _call_general_llm(question, user, related=related)
     return {
-        "answer": _simulated_llm(question, user),
-        "source": "llm-fallback",
+        "answer": llm_answer,
+        "source": llm_source,           # "llm-anthropic" or "llm-templated"
         "score": round(best_score, 2),
         "hallucination_warning": True,
     }
 
 
-def _simulated_llm(question: str, user: Optional[dict]) -> str:
-    role = (user["role"] if user else "visitor").capitalize()
+# ---------------------------------------------------------------------------
+# General LLM fallback
+# ---------------------------------------------------------------------------
+
+def _system_prompt(user: Optional[dict]) -> str:
+    role = (user["role"] if user else "visitor")
     return (
-        f"(LLM fallback to general model) I don't have specific College0 "
+        "You are a fallback general-purpose assistant for College0, a small "
+        "graduate-school management app. You are being called ONLY because the "
+        "user's question did NOT match College0's local knowledge base. "
+        "Therefore:\n"
+        " - Do NOT invent College0-specific policies, course codes, deadlines "
+        "or names. If the answer would require those, say so.\n"
+        " - You may answer general academic / programming / life questions "
+        "from your own training, briefly.\n"
+        " - Keep replies under ~120 words and use plain text (no markdown "
+        "headings).\n"
+        f" - The user's role in College0 is: {role}."
+    )
+
+
+def _call_general_llm(question: str, user: Optional[dict],
+                      related: Optional[str] = None) -> tuple[str, str]:
+    """Try the real Anthropic API and fall back to a templated answer.
+
+    Returns ``(answer_text, source_tag)``. ``source_tag`` is either
+    ``"llm-anthropic"`` (real API call) or ``"llm-templated"`` (offline
+    fallback) so the UI can show how the answer was produced.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return _templated_llm(question, user,
+                              reason="ANTHROPIC_API_KEY not set"), "llm-templated"
+
+    try:
+        # Import here, not at module top, so the app still starts cleanly
+        # on machines that never installed the SDK.
+        import anthropic  # type: ignore
+    except ImportError:
+        return _templated_llm(question, user,
+                              reason="anthropic SDK not installed"), "llm-templated"
+
+    user_msg = question.strip()
+    if related:
+        user_msg += (
+            "\n\n(For your reference only — this is the closest entry from "
+            "College0's own knowledge base, which did NOT match the question "
+            "well. Use it as a weak hint, not as fact:\n"
+            f"{related})"
+        )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=_ANTHROPIC_MODEL,
+            max_tokens=400,
+            system=_system_prompt(user),
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        # The SDK gives us a list of content blocks; we only care about text.
+        parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
+        answer = "\n".join(p for p in parts if p).strip()
+        if not answer:
+            return _templated_llm(question, user,
+                                  reason="empty response from LLM"), "llm-templated"
+        # Prefix the answer so the user can always tell where it came from.
+        return (
+            f"(General LLM — Anthropic {_ANTHROPIC_MODEL}) {answer}\n\n"
+            "WARNING: This answer is NOT grounded in College0's data and may "
+            "be wrong (hallucinated). Treat as informational only."
+        ), "llm-anthropic"
+    except Exception as exc:  # network down, bad key, rate limit, you name it
+        return _templated_llm(question, user,
+                              reason=f"LLM call failed: {exc}"), "llm-templated"
+
+
+def _templated_llm(question: str, user: Optional[dict], reason: str = "") -> str:
+    """Fallback used when the real LLM isn't reachable.
+
+    Deliberately wordy so it's obvious from the UI which branch ran, even
+    when there's no API key configured.
+    """
+    role = (user["role"] if user else "visitor").capitalize()
+    why = f" [offline reason: {reason}]" if reason else ""
+    return (
+        f"(LLM fallback — templated{why}) I don't have specific College0 "
         f"information about: \"{question.strip()}\". A best-guess from a "
         f"general AI model would be: 'This appears to relate to college "
         f"operations or {role.lower()} workflows. Please confirm with the "
@@ -105,7 +209,7 @@ def _simulated_llm(question: str, user: Optional[dict]) -> str:
 
 
 def seed_corpus() -> None:
-    """Insert canned Q&A. Idempotent."""
+    """Load the canned Q&A into the database. Safe to call repeatedly."""
     items: list[tuple[str, str, str]] = [
         ("general", "What is College0?",
          "College0 is a graduate program with a 4-phase semester: class set-up, "

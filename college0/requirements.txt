@@ -1,2 +1,0 @@
-# College0 only needs the Python standard library (tkinter + sqlite3).
-# This file is here for clarity; there is nothing to install.

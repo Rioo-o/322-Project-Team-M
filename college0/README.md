@@ -1,32 +1,31 @@
-# College0 - AI-enabled Online College Program Management System
+# College0
 
-A toy local GUI demo built with **Python + Tkinter + SQLite** for CSC 322.
+A small AI-enabled online graduate program management system built for
+CSC 322. Single-window Tkinter GUI, SQLite for storage, and an optional
+real LLM fallback for the AI Q&A area.
 
-## Prerequisites
+## Requirements
 
-This app uses only the Python standard library — no `pip install` required. You do need **Python 3.10+** with Tkinter included.
+Python 3.10 or later with Tk support. Nothing else is required to run
+the core system — it uses only the standard library.
 
-| OS | Recommended install | Launch command |
-|---|---|---|
-| **macOS** | [python.org installer](https://www.python.org/downloads/) (includes Tk) | `python3.12 main.py` (or whichever 3.x version you installed) |
-| **Windows** | [python.org installer](https://www.python.org/downloads/) | `python main.py` |
-| **Linux** | System package manager | `python3 main.py` |
+The optional "real LLM" fallback for the AI Q&A area additionally needs
+the `anthropic` Python SDK and a valid API key. The app works fine
+without it (see [AI fallback](#ai-fallback) below).
 
-> **macOS users — important:** macOS ships two different Python 3 binaries that behave very differently with Tkinter:
-> - `python3` → Apple's Xcode Command Line Tools Python. Its Tk framework is broken and renders a blank grey window.
-> - `python3.12` (or `python3.11`, etc.) → the Python you installed from python.org. This includes a correct Tk build and works fine.
->
-> If you haven't installed Python from python.org yet, download it from https://www.python.org/downloads/ and use the versioned command (e.g. `python3.12 main.py`).
+| OS | Recommended setup |
+|---|---|
+| **macOS** | Install Python from [python.org](https://www.python.org/downloads/) (the bundled Tk in Apple's stock `python3` renders a blank window). Launch with `python3.12 main.py` (or whatever 3.x you installed). |
+| **Windows** | Install Python from [python.org](https://www.python.org/downloads/). Launch with `python main.py`. |
+| **Linux** | Install Python 3 and Tk via your package manager (`sudo apt-get install python3 python3-tk` on Debian/Ubuntu). Launch with `python3 main.py`. |
 
-> **Linux users:** If you see `ModuleNotFoundError: No module named 'tkinter'`, install it once:
-> Ubuntu/Debian → `sudo apt-get install python3-tk`
-
-## Quick start
-
-From the folder that contains this README (i.e. the `college0/` folder):
+## Run it
 
 ```bash
-# macOS
+git clone https://github.com/Rioo-o/322-Project-Team-M.git
+cd 322-Project-Team-M/college0
+
+# macOS (python.org install — the system python3 will render a blank window)
 python3.12 main.py
 
 # Windows
@@ -36,115 +35,96 @@ python main.py
 python3 main.py
 ```
 
-Or, from anywhere on your machine:
-
-```bash
-cd "path/to/College 0 CSC 322/college0"
-python3.12 main.py   # adjust command for your OS per the table above
-```
-
-On first launch the file `college0.db` is created in this folder and pre-loaded with demo data (10 students + 1 brand-new student, 4 instructors, 1 registrar, several courses and reviews). To reset the demo, just delete `college0.db` and relaunch.
+On first launch the app creates `college0.db` next to `main.py` and
+seeds it with demo data. To reset everything, quit the app, delete
+`college0.db`, and relaunch.
 
 ## Demo accounts
 
-| Role       | Username     | Password   | Notes                                                          |
-| ---------- | ------------ | ---------- | -------------------------------------------------------------- |
-| Registrar  | `registrar`  | `admin`    | Super-user. Sees everything.                                   |
-| Instructor | `prof_adams` | `password` | Teaches CS501 + CS520                                          |
-| Instructor | `prof_brown` | `password` | Teaches CS510                                                  |
-| Instructor | `prof_chen`  | `password` | Teaches CS530 + CS550                                          |
-| Instructor | `prof_diaz`  | `password` | Teaches CS540 (will be auto-suspended in demo)                 |
-| Student    | `alice`      | `password` | No CS501 history → can demo the **CS501 waitlist**.            |
-| Student    | `bob`        | `password` | Has a prior F in CS510 → can demo the **retake-F** rule.       |
-| Student    | `eve`        | `password` | 8 completed courses → can demo the **graduation-approved** flow. |
-| Student    | `frank`      | `password` | GPA 1.75 → demos the auto-termination rule after grading.      |
-| Student    | `new_grad`   | `welcome`  | First-login → demos forced **password change + tutorial**.     |
+All passwords are `password` unless noted otherwise.
 
-Other student accounts: `carol`, `dan`, `grace`, `hank`, `ivy`, `jay` (all `password`).
+| Role       | Username     | Password | Notes |
+| ---------- | ------------ | -------- | ----- |
+| Registrar  | `registrar`  | `admin`  | Super-user; sees everything. |
+| Instructor | `prof_adams` | password | Teaches CS501 + CS520. |
+| Instructor | `prof_brown` | password | Teaches CS510. |
+| Instructor | `prof_chen`  | password | Teaches CS530 + CS550. |
+| Instructor | `prof_diaz`  | password | Teaches CS540 only — will be auto-suspended in the demo. |
+| Student    | `alice`      | password | No CS501 history → demos the waitlist path. |
+| Student    | `bob`        | password | Has a prior F in CS510 → demos the retake-F rule. |
+| Student    | `eve`        | password | 8 prior completions → demos a graduation approval. |
+| Student    | `frank`      | password | Low GPA → demos auto-termination after grading. |
+| Student    | `new_grad`   | `welcome` | First-time login → demos the forced password change + tutorial. |
 
-## What the demo covers (spec mapping)
+Additional student accounts (all `password`): `carol`, `dan`, `grace`,
+`hank`, `ivy`, `jay`.
 
-1. **Public Home** - intro, top-rated and lowest-rated classes, students with the highest GPA.
-2. **Visitor applications** - apply to become a student (auto-rule = GPA ≥ 3.0 + quota; manual override requires justification) or instructor.
-3. **Registrar dashboard**
-   - Approve / reject applications. Auto-rule fires; override needs justification.
-   - Move the semester through its 4 phases (Set-up → Registration → Class Running → Grading → next semester).
-   - Create courses and assign instructors.
-   - Manage the taboo-word list.
-   - **Reviews tab** - the only place in the system that shows who wrote which review (spec: "no one else except the registrars knows who rated which class"); hidden taboo reviews are shown here too, tagged `[HIDDEN]`.
-   - Process student / instructor complaints (warn target, warn filer, dismiss).
-   - See warnings, suspensions, fines and instructor class-GPA flags.
-   - Review and decide graduation applications.
-   - "People" tab: see every user's status, warnings, fines.
-4. **Instructor dashboard** - class roster (with each student's GPA/courses-done/honors summary inline), a **Student Records** tab with each student's basic info + full transcript, wait-list admit, grade entry during Grading phase, file a complaint about a student.
-5. **Student dashboard** - register for 2–4 courses (conflict + capacity + retake-F rules), see records, write reviews (with taboo-word filtering and warnings), submit complaints, apply for graduation, **password change on first login**, **tutorial banner** for new students. Honor tokens can be spent to clear warnings; fines can be paid in-app. If a student's course is cancelled mid-semester, a **special re-registration window** opens automatically and a yellow banner appears on every page until the registrar advances to GRADING.
-6. **AI Q&A** - role-scoped chat area. Looks up a local "vector-style" Q&A corpus first; if nothing matches well enough, it falls back to a simulated LLM answer with a clear hallucination warning. Visitors see general info only; students see their currently-enrolled courses; instructors see their classes.
-7. **Creative feature: Study Buddy Matcher** - in the student dashboard, ranks classmates by Jaccard similarity over current-semester enrollments and shows the courses you share.
+## AI fallback
 
-## Run the app
+The AI Q&A area first checks a small role-scoped Q&A corpus stored in
+SQLite. If nothing matches well enough, the question is forwarded to
+Anthropic's Claude API and the answer is shown with an explicit
+"ungrounded — may be a hallucination" warning so it's obvious where
+the response came from.
+
+**To enable the real LLM** (recommended for the full experience):
 
 ```bash
-cd college0
-
-# macOS (python.org install)
-python3.12 main.py
-
-# Windows
-python main.py
-
-# Linux
-python3 main.py
+pip install anthropic
+export ANTHROPIC_API_KEY="sk-ant-..."   # macOS / Linux
+# Windows PowerShell:
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
 ```
 
-A 5-minute demo script with exact click order is in **`demo_script.md`**.
+Then launch the app normally. In the AI Chat tab, ask something the
+local corpus doesn't cover (e.g. `who is the chancellor of Stanford?`)
+and the answer will be tagged `(General LLM — Anthropic ...)`.
+
+**To run without it**: don't install the package and don't set the
+variable. Any question that misses the local corpus falls back to a
+templated offline answer (still flagged as a possible hallucination).
+Everything else in the system continues to work.
+
+The model can be overridden with `COLLEGE0_LLM_MODEL` (defaults to
+`claude-haiku-4-5`).
 
 ## Project layout
 
 ```
 college0/
-  main.py                # entry point
-  college0.db            # created on first run
+  main.py            # entry point
   README.md
-  demo_script.md         # what to click for the demo
-  requirements.txt       # (intentionally empty — stdlib only)
   core/
-    db.py                # schema + connection
-    seed.py              # demo data
-    auth.py              # login / password change
-    models.py            # CRUD helpers
-    rules.py             # business rules (warnings, GPA, suspensions...)
-    ai.py                # local Q&A corpus + simulated LLM fallback
+    db.py            # SQLite schema + connection helpers
+    seed.py          # demo data
+    auth.py          # login / password change
+    models.py        # CRUD helpers
+    rules.py         # business rules (warnings, GPAs, suspensions, ...)
+    ai.py            # local Q&A corpus + LLM fallback
   ui/
-    app.py               # single-window router
-    theme.py             # colors / fonts
+    app.py           # single-window router
+    theme.py         # colors / fonts / cross-platform button helper
     views/
-      home.py            # public landing
-      login.py           # login + first-login password change
-      apply.py           # visitor applications
-      registrar.py       # registrar dashboard
-      instructor.py
-      student.py
-      ai_chat.py         # AI Q&A
+      home.py        # public landing page
+      login.py       # sign-in + first-login password change
+      apply.py       # visitor applications
+      registrar.py   # registrar dashboard
+      instructor.py  # instructor dashboard
+      student.py     # student dashboard
+      ai_chat.py     # AI Q&A
 ```
 
-## Notes / simplifications
+## Known simplifications
 
-These are intentionally simplified to keep the demo simple and offline:
+A few corners are intentionally cut so the demo stays small and fully
+offline-capable:
 
-- Passwords are stored in plaintext. **Do not use this code for anything real.**
-- The "vector DB" is a query-coverage score over a small canned Q&A corpus stored in SQLite, not a real embedding store.
-- The "LLM fallback" is a templated response with an explicit hallucination warning; no external API is called, so the demo runs fully offline.
-- Semester phases are advanced manually by the registrar (no clock-based progression).
-- The **special re-registration window** for students of cancelled courses is implemented as a per-student flag (`students.special_reg_open`). It opens automatically when the registrar advances to RUNNING and a course cancels; it closes automatically when the registrar advances to GRADING. While open, `try_register` accepts those students even though the global phase is RUNNING.
-- Fines and "email" notifications are surfaced in-app (banners, lists), not actually charged or sent.
-- Graduation requirements are simplified to: 8+ completed courses (grade ≥ D) including CS501 plus either CS510 or CS520.
-
-> **Existing databases**: if you have an older `college0.db` from before
-> the re-registration feature was added, `db.init_schema()` will migrate
-> it automatically (it adds the missing `students.special_reg_open`
-> column on launch). To start clean, just delete `college0.db` and
-> relaunch.
-
-## Creative feature: Study Buddy Matcher
-
-Open the **Study Buddies** tab inside the student dashboard. The system computes Jaccard similarity over each student's current-semester enrolled courses and shows the top 5 best-matched classmates along with the courses they share - a small but real social-graph layer on top of the data the system already has.
+- Passwords are stored in plaintext.
+- The "vector DB" is a bag-of-words coverage score over a small canned
+  Q&A corpus, not a real embedding store.
+- Semester phases advance manually from the registrar dashboard — no
+  clock-based progression.
+- Fines and "email" notifications are surfaced as in-app banners
+  rather than actually charged or sent.
+- Graduation requires 8+ completed non-failed courses, including CS501
+  plus either CS510 or CS520.

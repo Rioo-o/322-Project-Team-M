@@ -1,7 +1,9 @@
-"""Thin CRUD helpers around the SQLite database.
+"""CRUD helpers on top of the SQLite database.
 
-Each function opens its own connection and commits before returning,
-so callers don't need to worry about transactions.
+Each function opens its own short-lived connection and commits before
+returning, so callers never have to think about transactions. Anything
+that needs to do something non-trivial (warnings, suspensions, GPA,
+etc.) lives in ``rules.py`` and calls these helpers under the hood.
 """
 from __future__ import annotations
 
@@ -35,18 +37,16 @@ def set_phase(phase: str) -> None:
 
 
 def advance_semester() -> list[str]:
-    """Roll forward to the next semester (setup phase).
+    """Roll the semester counter forward and reset us to ``setup``.
 
-    Spec: "any students receiving up to 3 warnings will be suspended for
-    1 semester …". The suspension is time-boxed, so when we cross into
-    the new semester we lift the hold on anyone whose
-    ``suspended_until_semester`` has now arrived. Their warning counter
-    is reset to 0 (clean slate after serving the punishment); any
-    outstanding fine is left in place so the registrar / student can
-    still settle it.
+    A side effect: every suspension is time-boxed to a specific
+    semester, so when we tick forward we automatically reinstate
+    anyone whose ban has now expired. Their warning counter is reset
+    to 0 (fresh slate after serving the suspension), but any unpaid
+    fine sticks around so the registrar / student can still settle it.
 
-    Returns a list of human-readable events for the UI's "Latest rule
-    events" panel.
+    Returns human-readable event strings the UI can show in its
+    "Latest rule events" panel.
     """
     events: list[str] = []
     with connect() as c:
@@ -56,8 +56,8 @@ def advance_semester() -> list[str]:
         new_sem = c.execute(
             "SELECT semester FROM semester_state WHERE id=1"
         ).fetchone()[0]
-        # Anyone whose suspension was set to end at-or-before this new
-        # semester is reactivated.
+        # Reinstate anyone whose suspension was set to end at-or-before
+        # this brand-new semester.
         rows = c.execute(
             """
             SELECT id, full_name, role, fine_due FROM users
@@ -111,7 +111,7 @@ def list_users(role: Optional[str] = None) -> list[dict]:
 
 
 def list_students() -> list[dict]:
-    """Students plus their academic record."""
+    """All student rows, joined to their academic record (GPA, honors, etc.)."""
     with connect() as c:
         rows = c.execute(
             """
@@ -152,7 +152,11 @@ def clear_first_login(user_id: int) -> None:
 
 
 def warn_user(user_id: int, reason: str) -> int:
-    """Increment warning counter, log it, return total warnings (after)."""
+    """Bump the warning counter, log why, and return the new total.
+
+    Most callers should go through ``rules.warn_count_increment`` instead
+    — that wrapper also applies the 3-strike suspension consequence.
+    """
     with connect() as c:
         c.execute(
             "UPDATE users SET warnings = warnings + 1 WHERE id=?",
@@ -205,7 +209,11 @@ def pay_fine(user_id: int) -> None:
 
 
 def consume_honor_to_clear_warning(user_id: int) -> bool:
-    """Use one honor token to remove one warning. Returns True on success."""
+    """Spend one of the student's honor tokens to wipe out a single warning.
+
+    Returns ``True`` if the swap actually happened (i.e. the student
+    had both an honor and a warning to begin with).
+    """
     with connect() as c:
         row = c.execute(
             """
@@ -225,7 +233,7 @@ def consume_honor_to_clear_warning(user_id: int) -> bool:
 # ---------- special re-registration window ----------
 
 def set_special_reg(student_id: int, value: int) -> None:
-    """Open (1) or close (0) the special re-registration window for one student."""
+    """Open (1) or close (0) the "one more chance" window for one student."""
     with connect() as c:
         c.execute(
             "UPDATE students SET special_reg_open=? WHERE user_id=?",
@@ -244,7 +252,7 @@ def get_special_reg(student_id: int) -> int:
 
 
 def list_special_reg_students() -> list[dict]:
-    """Active students currently eligible for the 'one more chance' window."""
+    """Active students who currently have the "one more chance" window open."""
     with connect() as c:
         rows = c.execute(
             """
@@ -258,7 +266,8 @@ def list_special_reg_students() -> list[dict]:
 
 
 def clear_all_special_reg() -> int:
-    """Close the window for everyone. Returns rows affected."""
+    """Slam the "one more chance" window shut for every student. Returns
+    how many rows were actually changed."""
     with connect() as c:
         cur = c.execute(
             "UPDATE students SET special_reg_open=0 WHERE special_reg_open=1"
@@ -303,7 +312,14 @@ def update_application(app_id: int, status: str, decision_note: str) -> None:
 
 
 def create_student_user(full_name: str) -> tuple[int, str, str]:
-    """Make a new student user with auto username + temp password."""
+    """Spin up a new student account.
+
+    Derives a username from the first name (suffixing a digit if it's
+    taken) and hands back ``(user_id, username, temp_password)`` so the
+    registrar UI can show the credentials to whoever approved them.
+    The new user is flagged ``must_change_pw=1`` so the first login
+    forces a password reset.
+    """
     base = full_name.lower().split()[0]
     with connect() as c:
         username = base

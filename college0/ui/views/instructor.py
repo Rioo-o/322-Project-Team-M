@@ -29,8 +29,8 @@ class InstructorView(tk.Frame):
                           "Each enrolled student shows their basic info + summary academic "
                           "record (GPA, courses done, honors). Admit waitlisted students with one click."),
             "records":   ("Student Records",
-                          "Spec: instructors can see the basic info and academic records of "
-                          "students in their current class(es). Full transcripts below."),
+                          "Basic info and academic history for every student in your "
+                          "classes this semester. Each row expands to the full transcript."),
             "grades":    ("Grade Entry",
                           "Available only during the GRADING phase. Pick a grade, click Save. GPAs recompute live."),
             "complaint": ("File a Complaint",
@@ -53,9 +53,9 @@ class InstructorView(tk.Frame):
         status = self.app.user["status"]
         until = self.app.user.get("suspended_until_semester")
         if status == "suspended":
-            msg = ("You are SUSPENDED for this semester. Spec: 'suspended "
-                   "instructors cannot teach in the next semester.' You can "
-                   "still log in to monitor your record. ")
+            msg = ("You are SUSPENDED for this semester and won't be assigned "
+                   "any classes next semester either. You can still sign in to "
+                   "monitor your record in the meantime. ")
             if until:
                 msg += (f"You will be automatically reinstated when the "
                         f"registrar advances to semester {until}.")
@@ -268,10 +268,24 @@ class InstructorView(tk.Frame):
     def _render_complaint(self):
         panel = self._panel("File a complaint about a student")
         panel.pack(fill="x")
-        students = models.list_students()
+
+        # Spec scoping: an instructor can only complain about a student in
+        # one of their current classes (i.e., they share a course).
+        sem = models.get_semester_state()["semester"]
+        my_courses = [c for c in models.list_courses(semester=sem)
+                      if c["instructor_id"] == self.app.user["id"]]
+        student_ids: set[int] = set()
+        for c in my_courses:
+            for e in models.course_enrollments(
+                    c["id"], statuses=["enrolled", "waitlist"]):
+                student_ids.add(e["student_user_id"])
+        students = [s for s in models.list_students() if s["id"] in student_ids]
         if not students:
-            tk.Label(panel, text="No students on file.", bg=theme.PANEL,
-                     fg=theme.MUTED).pack(anchor="w")
+            tk.Label(panel,
+                     text="You can only complain about students currently in "
+                          "one of your classes — your roster is empty right now.",
+                     bg=theme.PANEL, fg=theme.MUTED, wraplength=900,
+                     justify="left").pack(anchor="w")
             return
         var = tk.StringVar(value=students[0]["full_name"])
         tk.Label(panel, text="Student:", bg=theme.PANEL, fg=theme.TEXT,

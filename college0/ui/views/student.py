@@ -338,7 +338,8 @@ class StudentView(tk.Frame):
                 """,
                 (self.app.user["id"], state["semester"]),
             ).fetchall()
-        # Spec: can't rate after instructor posts grade.
+        # Reviews are only allowed while the grade is still blank —
+        # once the instructor enters one, the form locks for that class.
         ratable = [r for r in rows if not r["grade"]]
 
         form = self._panel("Write a review (for a class you're currently in)")
@@ -428,9 +429,40 @@ class StudentView(tk.Frame):
 
         tk.Label(panel, text="Against:", bg=theme.PANEL, fg=theme.TEXT,
                  font=theme.FONT).pack(anchor="w")
-        # Build list of possible targets: other students + instructors.
-        targets = [t for t in (models.list_students() + models.list_instructors())
-                   if t["id"] != self.app.user["id"]]
+
+        # Spec scoping: you can only complain about a student or instructor
+        # you share a course with this semester. Build that set:
+        #   - other students enrolled (or waitlisted) in any of your courses
+        #   - instructors of any course you are enrolled (or waitlisted) in
+        state = models.get_semester_state()
+        my_enrol = models.student_enrollments(
+            self.app.user["id"], semester=state["semester"],
+            statuses=["enrolled", "waitlist"])
+        classmate_ids: set[int] = set()
+        instructor_ids: set[int] = set()
+        for e in my_enrol:
+            course = models.get_course(e["course_id"])
+            if course and course.get("instructor_id"):
+                instructor_ids.add(course["instructor_id"])
+            for peer in models.course_enrollments(
+                    e["course_id"], statuses=["enrolled", "waitlist"]):
+                if peer["student_user_id"] != self.app.user["id"]:
+                    classmate_ids.add(peer["student_user_id"])
+
+        targets = [t for t in models.list_students()
+                   if t["id"] in classmate_ids]
+        targets += [t for t in models.list_instructors()
+                    if t["id"] in instructor_ids]
+
+        if not targets:
+            tk.Label(panel,
+                     text=("You can only complain about someone you share a "
+                           "course with this semester. Register for a class "
+                           "first."),
+                     bg=theme.PANEL, fg=theme.MUTED, font=theme.FONT,
+                     wraplength=900, justify="left").pack(anchor="w", pady=(0, 8))
+            return
+
         labels = [f"{t['full_name']} ({t['role']})" for t in targets]
         tvar = tk.StringVar(value=labels[0] if labels else "")
         ttk.Combobox(panel, textvariable=tvar, state="readonly",

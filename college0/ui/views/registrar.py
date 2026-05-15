@@ -28,8 +28,9 @@ class RegistrarView(tk.Frame):
             "taboo":       ("Taboo Words",
                             "Words on this list are masked or hidden in student reviews and earn warnings."),
             "reviews":     ("Reviews (authors visible)",
-                            "Spec: only the registrar can see who wrote which review. "
-                            "Hidden reviews (≥3 taboo words) are shown here too, with a [hidden] tag."),
+                            "Authors are only revealed here — everywhere else in the app, "
+                            "reviews appear anonymously. Hidden reviews (those that tripped "
+                            "the ≥3 taboo-word rule) show up too, tagged [hidden]."),
             "complaints":  ("Complaints",
                             "Each complaint must be acted on: warn the target, warn the filer, or dismiss."),
             "grads":       ("Graduation Applications",
@@ -386,8 +387,9 @@ class RegistrarView(tk.Frame):
     # ===== Reviews (authorship visible to registrar only) =====
 
     def _render_reviews(self):
-        # Group all reviews by course; show author name (only here in the UI).
-        # Spec: "no one else except the registrars knows who rated which class."
+        # Group every review (including the hidden ones) by course and
+        # show the author's name. This is the only view in the whole app
+        # that does that — everywhere else, ratings are anonymous.
         courses = models.list_courses()
         # Sort: current-semester active first, then everything else.
         state = models.get_semester_state()
@@ -536,6 +538,13 @@ class RegistrarView(tk.Frame):
         panel = self._panel("Everyone in the system")
         panel.pack(fill="both", expand=True)
 
+        tk.Label(panel,
+                 text="As the registrar you have full visibility into every account. "
+                      "Select a student row and click \"View transcript\" (or "
+                      "double-click) to drill into their full record.",
+                 bg=theme.PANEL, fg=theme.MUTED, font=theme.FONT_SMALL,
+                 wraplength=900, justify="left").pack(anchor="w", pady=(0, 6))
+
         cols = ("role", "name", "username", "warnings", "status", "extra")
         tree = ttk.Treeview(panel, columns=cols, show="headings", height=18)
         for c, w in zip(cols, (90, 180, 120, 80, 110, 220)):
@@ -543,6 +552,8 @@ class RegistrarView(tk.Frame):
             tree.column(c, width=w, anchor="w")
         tree.pack(fill="both", expand=True)
 
+        # Map row iid -> user dict so we can open a detail popup later.
+        row_to_user: dict[str, dict] = {}
         for u in models.list_users():
             extra = ""
             if u["role"] == "student":
@@ -553,6 +564,143 @@ class RegistrarView(tk.Frame):
                     extra = f"GPA {r['gpa']} · {r['courses_completed']} done · {r['honors']} honors"
             if u["fine_due"]:
                 extra += f" · fine ${u['fine_due']:.0f}"
-            tree.insert("", "end",
-                        values=(u["role"], u["full_name"], u["username"],
-                                u["warnings"], u["status"], extra))
+            iid = tree.insert("", "end",
+                              values=(u["role"], u["full_name"], u["username"],
+                                      u["warnings"], u["status"], extra))
+            row_to_user[iid] = u
+
+        def open_selected(_evt=None):
+            sel = tree.selection()
+            if not sel:
+                self.app.toast_msg("Select a row first.", "warn")
+                return
+            u = row_to_user.get(sel[0])
+            if not u:
+                return
+            self._open_user_detail(u)
+
+        tree.bind("<Double-1>", open_selected)
+
+        btn_row = tk.Frame(panel, bg=theme.PANEL)
+        btn_row.pack(fill="x", pady=(8, 0))
+        theme.make_button(btn_row, text="View transcript",
+                          command=open_selected,
+                          bg=theme.ACCENT, fg="white",
+                          padx=14, pady=4).pack(side="left")
+
+    def _open_user_detail(self, user: dict):
+        """Popup window with the user's full record.
+
+        For students this is their transcript + summary; for instructors it
+        is the list of courses they have taught.
+        """
+        win = tk.Toplevel(self)
+        win.title(f"{user['full_name']} — {user['role']}")
+        win.configure(bg=theme.BG)
+        win.geometry("760x520")
+
+        # Header.
+        head = tk.Frame(win, bg=theme.BG, padx=16, pady=12)
+        head.pack(fill="x")
+        tk.Label(head, text=user["full_name"], bg=theme.BG, fg=theme.TEXT,
+                 font=theme.FONT_H1).pack(anchor="w")
+        sub = (f"{user['role']} · username {user['username']} · "
+               f"status {user['status']} · warnings {user['warnings']}")
+        if user.get("fine_due"):
+            sub += f" · fine ${user['fine_due']:.0f}"
+        tk.Label(head, text=sub, bg=theme.BG, fg=theme.MUTED,
+                 font=theme.FONT).pack(anchor="w")
+
+        body = tk.Frame(win, bg=theme.BG, padx=16, pady=8)
+        body.pack(fill="both", expand=True)
+
+        if user["role"] == "student":
+            with connect() as c:
+                r = c.execute(
+                    "SELECT gpa, semester_gpa, courses_completed, honors, "
+                    "semesters_completed FROM students WHERE user_id=?",
+                    (user["id"],),
+                ).fetchone()
+            if r:
+                tk.Label(body,
+                         text=(f"Overall GPA {r['gpa']:.2f}  ·  "
+                               f"Semester GPA {r['semester_gpa']:.2f}  ·  "
+                               f"{r['courses_completed']} courses completed  ·  "
+                               f"{r['honors']} honors  ·  "
+                               f"{r['semesters_completed']} semester(s) on record"),
+                         bg=theme.BG, fg=theme.TEXT,
+                         font=theme.FONT_BOLD).pack(anchor="w", pady=(0, 8))
+
+            tk.Label(body, text="Transcript", bg=theme.BG, fg=theme.TEXT,
+                     font=theme.FONT_H2).pack(anchor="w")
+            cols = ("semester", "code", "title", "status", "grade")
+            tree = ttk.Treeview(body, columns=cols, show="headings", height=10)
+            for c, w in zip(cols, (80, 80, 280, 100, 60)):
+                tree.heading(c, text=c.title())
+                tree.column(c, width=w, anchor="w")
+            tree.pack(fill="both", expand=True)
+            history = models.student_history(user["id"])
+            if not history:
+                tk.Label(body, text="(no completed history yet)",
+                         bg=theme.BG, fg=theme.MUTED).pack(anchor="w")
+            for h in history:
+                tree.insert("", "end",
+                            values=(h["semester"], h["code"], h["title"],
+                                    h["status"], h["grade"] or "—"))
+
+            # Current-semester enrollment.
+            sem = models.get_semester_state()["semester"]
+            cur = models.student_enrollments(user["id"], semester=sem,
+                                              statuses=["enrolled", "waitlist"])
+            tk.Label(body, text=f"Current semester ({sem}) enrolments",
+                     bg=theme.BG, fg=theme.TEXT,
+                     font=theme.FONT_H2).pack(anchor="w", pady=(10, 2))
+            if not cur:
+                tk.Label(body, text="  (none)", bg=theme.BG,
+                         fg=theme.MUTED).pack(anchor="w")
+            for e in cur:
+                tk.Label(body,
+                         text=f"  • {e['code']} {e['title']} "
+                              f"({e['day']} {e['start_hour']}-{e['end_hour']}) "
+                              f"[{e['status']}]",
+                         bg=theme.BG, fg=theme.TEXT,
+                         font=theme.FONT).pack(anchor="w")
+        elif user["role"] == "instructor":
+            tk.Label(body, text="Courses taught", bg=theme.BG, fg=theme.TEXT,
+                     font=theme.FONT_H2).pack(anchor="w")
+            cols = ("semester", "code", "title", "status", "enrolled")
+            tree = ttk.Treeview(body, columns=cols, show="headings", height=10)
+            for c, w in zip(cols, (80, 80, 280, 100, 80)):
+                tree.heading(c, text=c.title())
+                tree.column(c, width=w, anchor="w")
+            tree.pack(fill="both", expand=True)
+            taught = [c for c in models.list_courses()
+                      if c["instructor_id"] == user["id"]]
+            if not taught:
+                tk.Label(body, text="(no courses on record)",
+                         bg=theme.BG, fg=theme.MUTED).pack(anchor="w")
+            for c in taught:
+                n = len(models.course_enrollments(c["id"],
+                                                   statuses=["enrolled"]))
+                tree.insert("", "end",
+                            values=(c["semester"], c["code"], c["title"],
+                                    c["status"], n))
+        else:
+            tk.Label(body,
+                     text="Registrar account — no transcript or roster.",
+                     bg=theme.BG, fg=theme.MUTED).pack(anchor="w")
+
+        # Warning history is useful for any role.
+        warns = models.list_warnings(user["id"])
+        if warns:
+            tk.Label(body, text="Warning history", bg=theme.BG, fg=theme.TEXT,
+                     font=theme.FONT_H2).pack(anchor="w", pady=(10, 2))
+            for w in warns:
+                tk.Label(body, text=f"  • {w['created_at']} — {w['reason']}",
+                         bg=theme.BG, fg=theme.MUTED,
+                         font=theme.FONT_SMALL, anchor="w",
+                         wraplength=700, justify="left").pack(fill="x", anchor="w")
+
+        theme.make_button(win, text="Close", command=win.destroy,
+                          bg=theme.MUTED, fg="white",
+                          padx=14, pady=4).pack(pady=10)

@@ -1,6 +1,8 @@
-"""Authentication: very thin wrapper around the users table.
+"""Login + password change.
 
-Passwords are plaintext for this toy demo.
+Just a thin wrapper around the ``users`` table. Passwords are stored
+in plaintext here — fine for a class demo, obviously not for anything
+real.
 """
 from __future__ import annotations
 
@@ -20,11 +22,11 @@ def login(username: str, password: str) -> tuple[Optional[dict], Optional[str]]:
         return None, "This account has been terminated."
     if u["status"] == "fired":
         return None, "This account has been fired and cannot log in."
-    # Suspended and graduated users are intentionally NOT blocked here:
-    # - Suspended students/instructors still need to log in to pay their
-    #   fine and to redeem honor tokens that clear warnings. Their
-    #   dashboard already shows a hard status banner and the rule engine
-    #   (try_register etc.) refuses any privileged actions while inactive.
+    # Note: suspended and graduated users can still sign in.
+    # - Suspended folks need access to pay their fine and to redeem
+    #   honor tokens. Their dashboard shows a hard red banner and the
+    #   business-rule layer (try_register, etc.) blocks anything that
+    #   matters while they're inactive.
     # - Graduated students keep read-only access to their transcript.
     return u, None
 
